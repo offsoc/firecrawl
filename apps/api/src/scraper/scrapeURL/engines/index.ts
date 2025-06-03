@@ -14,8 +14,12 @@ import { scrapeCache } from "./cache";
 export type Engine =
   | "fire-engine;chrome-cdp"
   | "fire-engine(retry);chrome-cdp"
+  | "fire-engine;chrome-cdp;stealth"
+  | "fire-engine(retry);chrome-cdp;stealth"
   | "fire-engine;playwright"
+  | "fire-engine;playwright;stealth"
   | "fire-engine;tlsclient"
+  | "fire-engine;tlsclient;stealth"
   | "playwright"
   | "fetch"
   | "pdf"
@@ -37,9 +41,13 @@ export const engines: Engine[] = [
   ...(useFireEngine
     ? [
         "fire-engine;chrome-cdp" as const,
+        "fire-engine;chrome-cdp;stealth" as const,
         "fire-engine(retry);chrome-cdp" as const,
+        "fire-engine(retry);chrome-cdp;stealth" as const,
         "fire-engine;playwright" as const,
+        "fire-engine;playwright;stealth" as const,
         "fire-engine;tlsclient" as const,
+        "fire-engine;tlsclient;stealth" as const,
       ]
     : []),
   ...(usePlaywright ? ["playwright" as const] : []),
@@ -61,6 +69,7 @@ export const featureFlags = [
   "skipTlsVerification",
   "useFastMode",
   "stealthProxy",
+  "disableAdblock",
 ] as const;
 
 export type FeatureFlag = (typeof featureFlags)[number];
@@ -82,6 +91,7 @@ export const featureFlagOptions: {
   mobile: { priority: 10 },
   skipTlsVerification: { priority: 10 },
   stealthProxy: { priority: 20 },
+  disableAdblock: { priority: 10 },
 } as const;
 
 export type EngineScrapeResult = {
@@ -101,6 +111,10 @@ export type EngineScrapeResult = {
       value: unknown
     }[];
   };
+
+  numPages?: number;
+
+  contentType?: string;
 };
 
 const engineHandlers: {
@@ -112,8 +126,12 @@ const engineHandlers: {
   cache: scrapeCache,
   "fire-engine;chrome-cdp": scrapeURLWithFireEngineChromeCDP,
   "fire-engine(retry);chrome-cdp": scrapeURLWithFireEngineChromeCDP,
+  "fire-engine;chrome-cdp;stealth": scrapeURLWithFireEngineChromeCDP,
+  "fire-engine(retry);chrome-cdp;stealth": scrapeURLWithFireEngineChromeCDP,
   "fire-engine;playwright": scrapeURLWithFireEnginePlaywright,
+  "fire-engine;playwright;stealth": scrapeURLWithFireEnginePlaywright,
   "fire-engine;tlsclient": scrapeURLWithFireEngineTLSClient,
+  "fire-engine;tlsclient;stealth": scrapeURLWithFireEngineTLSClient,
   playwright: scrapeURLWithPlaywright,
   fetch: scrapeURLWithFetch,
   pdf: scrapePDF,
@@ -126,7 +144,7 @@ export const engineOptions: {
     features: { [F in FeatureFlag]: boolean };
 
     // This defines the order of engines in general. The engine with the highest quality will be used the most.
-    // Negative quality numbers are reserved for specialty engines, e.g. PDF and DOCX
+    // Negative quality numbers are reserved for specialty engines, e.g. PDF, DOCX, stealth proxies
     quality: number;
   };
 } = {
@@ -144,6 +162,7 @@ export const engineOptions: {
       skipTlsVerification: false,
       useFastMode: false,
       stealthProxy: false,
+      disableAdblock: false,
     },
     quality: 1000, // cache should always be tried first
   },
@@ -160,7 +179,8 @@ export const engineOptions: {
       mobile: true,
       skipTlsVerification: true,
       useFastMode: false,
-      stealthProxy: true,
+      stealthProxy: false,
+      disableAdblock: false,
     },
     quality: 50,
   },
@@ -177,9 +197,46 @@ export const engineOptions: {
       mobile: true,
       skipTlsVerification: true,
       useFastMode: false,
-      stealthProxy: true,
+      stealthProxy: false,
+      disableAdblock: false,
     },
     quality: 45,
+  },
+  "fire-engine;chrome-cdp;stealth": {
+    features: {
+      actions: true,
+      waitFor: true, // through actions transform
+      screenshot: true, // through actions transform
+      "screenshot@fullScreen": true, // through actions transform
+      pdf: false,
+      docx: false,
+      atsv: false,
+      location: true,
+      mobile: true,
+      skipTlsVerification: true,
+      useFastMode: false,
+      stealthProxy: true,
+      disableAdblock: false,
+    },
+    quality: -1,
+  },
+  "fire-engine(retry);chrome-cdp;stealth": {
+    features: {
+      actions: true,
+      waitFor: true, // through actions transform
+      screenshot: true, // through actions transform
+      "screenshot@fullScreen": true, // through actions transform
+      pdf: false,
+      docx: false,
+      atsv: false,
+      location: true,
+      mobile: true,
+      skipTlsVerification: true,
+      useFastMode: false,
+      stealthProxy: true,
+      disableAdblock: false,
+    },
+    quality: -5,
   },
   "fire-engine;playwright": {
     features: {
@@ -194,9 +251,28 @@ export const engineOptions: {
       mobile: false,
       skipTlsVerification: false,
       useFastMode: false,
-      stealthProxy: true,
+      stealthProxy: false,
+      disableAdblock: true,
     },
     quality: 40,
+  },
+  "fire-engine;playwright;stealth": {
+    features: {
+      actions: false,
+      waitFor: true,
+      screenshot: true,
+      "screenshot@fullScreen": true,
+      pdf: false,
+      docx: false,
+      atsv: false,
+      location: false,
+      mobile: false,
+      skipTlsVerification: false,
+      useFastMode: false,
+      stealthProxy: true,
+      disableAdblock: true,
+    },
+    quality: -10,
   },
   playwright: {
     features: {
@@ -212,6 +288,7 @@ export const engineOptions: {
       skipTlsVerification: false,
       useFastMode: false,
       stealthProxy: false,
+      disableAdblock: false,
     },
     quality: 20,
   },
@@ -228,9 +305,28 @@ export const engineOptions: {
       mobile: false,
       skipTlsVerification: false,
       useFastMode: true,
-      stealthProxy: true,
+      stealthProxy: false,
+      disableAdblock: false,
     },
     quality: 10,
+  },
+  "fire-engine;tlsclient;stealth": {
+    features: {
+      actions: false,
+      waitFor: false,
+      screenshot: false,
+      "screenshot@fullScreen": false,
+      pdf: false,
+      docx: false,
+      atsv: true,
+      location: true,
+      mobile: false,
+      skipTlsVerification: false,
+      useFastMode: true,
+      stealthProxy: true,
+      disableAdblock: false,
+    },
+    quality: -15,
   },
   fetch: {
     features: {
@@ -246,6 +342,7 @@ export const engineOptions: {
       skipTlsVerification: false,
       useFastMode: true,
       stealthProxy: false,
+      disableAdblock: false,
     },
     quality: 5,
   },
@@ -263,8 +360,9 @@ export const engineOptions: {
       skipTlsVerification: false,
       useFastMode: true,
       stealthProxy: true, // kinda...
+      disableAdblock: true,
     },
-    quality: -10,
+    quality: -20,
   },
   docx: {
     features: {
@@ -280,8 +378,9 @@ export const engineOptions: {
       skipTlsVerification: false,
       useFastMode: true,
       stealthProxy: true, // kinda...
+      disableAdblock: true,
     },
-    quality: -10,
+    quality: -20,
   },
 };
 
@@ -293,7 +392,7 @@ export function buildFallbackList(meta: Meta): {
     ...engines,
     
     // enable fire-engine in self-hosted testing environment when mocks are supplied
-    ...((!useFireEngine && meta.mock !== null) ? ["fire-engine;chrome-cdp", "fire-engine(retry);chrome-cdp", "fire-engine;playwright", "fire-engine;tlsclient"] as Engine[] : [])
+    ...((!useFireEngine && meta.mock !== null) ? ["fire-engine;chrome-cdp", "fire-engine(retry);chrome-cdp", "fire-engine;chrome-cdp;stealth", "fire-engine(retry);chrome-cdp;stealth", "fire-engine;playwright", "fire-engine;tlsclient", "fire-engine;playwright;stealth", "fire-engine;tlsclient;stealth"] as Engine[] : [])
   ];
 
   if (meta.internalOptions.useCache !== true) {
@@ -301,9 +400,8 @@ export function buildFallbackList(meta: Meta): {
     if (cacheIndex !== -1) {
       _engines.splice(cacheIndex, 1);
     }
-  } else {
-    meta.logger.debug("Cache engine enabled by useCache option");
   }
+  
   const prioritySum = [...meta.featureFlags].reduce(
     (a, x) => a + featureFlagOptions[x].priority,
     0,
@@ -342,24 +440,6 @@ export function buildFallbackList(meta: Meta): {
 
     if (supportScore >= priorityThreshold) {
       selectedEngines.push({ engine, supportScore, unsupportedFeatures });
-      meta.logger.debug(`Engine ${engine} meets feature priority threshold`, {
-        supportScore,
-        prioritySum,
-        priorityThreshold,
-        featureFlags: [...meta.featureFlags],
-        unsupportedFeatures,
-      });
-    } else {
-      meta.logger.debug(
-        `Engine ${engine} does not meet feature priority threshold`,
-        {
-          supportScore,
-          prioritySum,
-          priorityThreshold,
-          featureFlags: [...meta.featureFlags],
-          unsupportedFeatures,
-        },
-      );
     }
   }
 
@@ -376,6 +456,10 @@ export function buildFallbackList(meta: Meta): {
         engineOptions[b.engine].quality - engineOptions[a.engine].quality,
     );
   }
+
+  meta.logger.info("Selected engines", {
+    selectedEngines,
+  });
 
   return selectedEngines;
 }

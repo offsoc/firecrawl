@@ -21,6 +21,8 @@ import {
   SiteError,
   TimeoutError,
   UnsupportedFileError,
+  SSLError,
+  PDFInsufficientTimeError,
 } from "./error";
 import { executeTransformers } from "./transformers";
 import { LLMRefusalError } from "./transformers/llmExtract";
@@ -116,6 +118,10 @@ function buildFeatureFlags(
     flags.add("docx");
   }
 
+  if (options.blockAds === false) {
+    flags.add("disableAdblock");
+  }
+
   return flags;
 }
 
@@ -180,6 +186,10 @@ export type InternalOptions = {
   fromCache?: boolean; // Indicates if the document was retrieved from cache
   abort?: AbortSignal;
   urlInvisibleInCurrentCrawl?: boolean;
+  unnormalizedSourceURL?: string;
+
+  saveScrapeResultToGCS?: boolean; // Passed along to fire-engine
+  bypassBilling?: boolean;
 };
 
 export type EngineResultsTracker = {
@@ -258,15 +268,21 @@ async function scrapeURLLoop(meta: Meta): Promise<ScrapeUrlResponse> {
         (engineResult.statusCode >= 200 && engineResult.statusCode < 300) ||
         engineResult.statusCode === 304;
       const hasNoPageError = engineResult.error === undefined;
+      const isLikelyProxyError = [403, 429].includes(engineResult.statusCode);
 
       results[engine] = {
         state: "success",
         result: engineResult,
-        factors: { isLongEnough, isGoodStatusCode, hasNoPageError },
+        factors: { isLongEnough, isGoodStatusCode, hasNoPageError, isLikelyProxyError },
         unsupportedFeatures,
         startedAt,
         finishedAt: Date.now(),
       };
+
+      if (isLikelyProxyError && meta.options.proxy === "auto" && !meta.featureFlags.has("stealthProxy")) {
+        meta.logger.info("Scrape via " + engine + " deemed unsuccessful due to proxy inadequacy. Adding stealthProxy flag.");
+        throw new AddFeatureError(["stealthProxy"]);
+      }
 
       // NOTE: TODO: what to do when status code is bad is tough...
       // we cannot just rely on text because error messages can be brief and not hit the limit
@@ -321,6 +337,8 @@ async function scrapeURLLoop(meta: Meta): Promise<ScrapeUrlResponse> {
         throw error;
       } else if (error instanceof SiteError) {
         throw error;
+      } else if (error instanceof SSLError) {
+        throw error;
       } else if (error instanceof ActionError) {
         throw error;
       } else if (error instanceof UnsupportedFileError) {
@@ -328,6 +346,8 @@ async function scrapeURLLoop(meta: Meta): Promise<ScrapeUrlResponse> {
       } else if (error instanceof PDFAntibotError) {
         throw error;
       } else if (error instanceof TimeoutSignal) {
+        throw error;
+      } else if (error instanceof PDFInsufficientTimeError) {
         throw error;
       } else {
         Sentry.captureException(error);
@@ -359,10 +379,13 @@ async function scrapeURLLoop(meta: Meta): Promise<ScrapeUrlResponse> {
     screenshot: result.result.screenshot,
     actions: result.result.actions,
     metadata: {
-      sourceURL: meta.url,
+      sourceURL: meta.internalOptions.unnormalizedSourceURL ?? meta.url,
       url: result.result.url,
       statusCode: result.result.statusCode,
       error: result.result.error,
+      numPages: result.result.numPages,
+      contentType: result.result.contentType,
+      proxyUsed: meta.featureFlags.has("stealthProxy") ? "stealth" : "basic",
     },
   };
 
@@ -468,12 +491,16 @@ export async function scrapeURL(
       // TODO: results?
     } else if (error instanceof SiteError) {
       meta.logger.warn("scrapeURL: Site failed to load in browser", { error });
+    } else if (error instanceof SSLError) {
+      meta.logger.warn("scrapeURL: SSL error", { error });
     } else if (error instanceof ActionError) {
       meta.logger.warn("scrapeURL: Action(s) failed to complete", { error });
     } else if (error instanceof UnsupportedFileError) {
       meta.logger.warn("scrapeURL: Tried to scrape unsupported file", {
         error,
       });
+    } else if (error instanceof PDFInsufficientTimeError) {
+      meta.logger.warn("scrapeURL: Insufficient time to process PDF", { error });
     } else if (error instanceof TimeoutSignal) {
       throw error;
     } else {

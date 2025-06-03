@@ -44,10 +44,12 @@ export async function scrapeDocument(
         internalOptions: {
           useCache: true,
           teamId: options.teamId,
+          saveScrapeResultToGCS: process.env.GCS_FIRE_ENGINE_BUCKET_NAME ? true : false,
         },
         origin: options.origin,
         is_scrape: true,
         from_extract: true,
+        startTime: Date.now(),
       },
       {},
       jobId,

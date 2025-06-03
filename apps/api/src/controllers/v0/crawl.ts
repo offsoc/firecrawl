@@ -24,7 +24,7 @@ import {
   saveCrawl,
   StoredCrawl,
 } from "../../../src/lib/crawl-redis";
-import { getScrapeQueue, redisConnection } from "../../../src/services/queue-service";
+import { redisEvictConnection } from "../../../src/services/redis";
 import { checkAndUpdateURL } from "../../../src/lib/validateUrl";
 import * as Sentry from "@sentry/node";
 import { getJobPriority } from "../../lib/job-priority";
@@ -41,7 +41,7 @@ export async function crawlController(req: Request, res: Response) {
 
     const { team_id, chunk } = auth;
 
-    redisConnection.sadd("teams_using_v0", team_id)
+    redisEvictConnection.sadd("teams_using_v0", team_id)
       .catch(error => logger.error("Failed to add team to teams_using_v0", { error, team_id }));
 
     if (req.headers["x-idempotency-key"]) {
@@ -115,7 +115,7 @@ export async function crawlController(req: Request, res: Response) {
         .json({ error: e.message ?? e });
     }
 
-    if (isUrlBlocked(url)) {
+    if (isUrlBlocked(url, auth.chunk?.flags ?? null)) {
       return res.status(403).json({
         error: BLOCKLISTED_URL_MESSAGE,
       });
@@ -161,7 +161,7 @@ export async function crawlController(req: Request, res: Response) {
       team_id
     );
     internalOptions.disableSmartWaitCache = true; // NOTE: smart wait disabled for crawls to ensure contentful scrape, speed does not matter
-
+    internalOptions.saveScrapeResultToGCS = process.env.GCS_FIRE_ENGINE_BUCKET_NAME ? true : false;
     delete (scrapeOptions as any).timeout;
 
     const sc: StoredCrawl = {
@@ -173,7 +173,7 @@ export async function crawlController(req: Request, res: Response) {
       createdAt: Date.now(),
     };
 
-    const crawler = crawlToCrawler(id, sc);
+    const crawler = crawlToCrawler(id, sc, auth.chunk?.flags ?? null);
 
     try {
       sc.robots = await crawler.getRobotsTxt();

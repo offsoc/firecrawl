@@ -119,7 +119,7 @@ export interface CrawlScrapeOptions {
   skipTlsVerification?: boolean;
   removeBase64Images?: boolean;
   blockAds?: boolean;
-  proxy?: "basic" | "stealth";
+  proxy?: "basic" | "stealth" | "auto";
 }
 
 export type Action = {
@@ -215,6 +215,11 @@ export interface CrawlParams {
   deduplicateSimilarURLs?: boolean;
   ignoreQueryParameters?: boolean;
   regexOnFullURL?: boolean;
+  /**
+   * Delay in seconds between scrapes. This helps respect website rate limits.
+   * If not provided, the crawler may use the robots.txt crawl delay if available.
+   */
+  delay?: number;
 }
 
 /**
@@ -516,6 +521,11 @@ export interface GenerateLLMsTextParams {
    */
   showFullText?: boolean;
   /**
+   * Whether to use cached content if available
+   * @default true
+   */
+  cache?: boolean;
+  /**
    * Experimental flag for streaming
    */
   __experimental_stream?: boolean;
@@ -550,7 +560,7 @@ export interface GenerateLLMsTextStatusResponse {
 export default class FirecrawlApp {
   public apiKey: string;
   public apiUrl: string;
-  public version: string = "1.19.1";
+  public version: string =  "1.25.1";
   
   private isCloudService(url: string): boolean {
     return url.includes('api.firecrawl.dev');
@@ -562,7 +572,7 @@ export default class FirecrawlApp {
       return packageJson.default.version;
     } catch (error) {
       console.error("Error getting version:", error);
-      return "1.19.1";
+      return  "1.25.1";
     }
   }
 
@@ -1481,6 +1491,13 @@ export default class FirecrawlApp {
    * @param {string} action - The action being performed when the error occurred.
    */
   handleError(response: AxiosResponse, action: string): void {
+    if (!response) {
+      throw new FirecrawlError(
+        `No response received while trying to ${action}. This may be a network error or the server is unreachable.`,
+        0
+      );
+    }
+
     if ([400, 402, 403, 408, 409, 500].includes(response.status)) {
       const errorMessage: string =
         response.data.error || "Unknown error occurred";

@@ -1,6 +1,5 @@
 import { Request, Response } from "express";
 import { z } from "zod";
-import { isUrlBlocked } from "../../scraper/WebScraper/utils/blocklist";
 import { protocolIncluded, checkUrl } from "../../lib/validateUrl";
 import { countries } from "../../lib/validate-country";
 import {
@@ -10,7 +9,6 @@ import {
   Document as V0Document,
 } from "../../lib/entities";
 import { InternalOptions } from "../../scraper/scrapeURL";
-import { BLOCKLISTED_URL_MESSAGE } from "../../lib/strings";
 
 export type Format =
   | "markdown"
@@ -26,8 +24,18 @@ export type Format =
 export const url = z.preprocess(
   (x) => {
     if (!protocolIncluded(x as string)) {
-      return `http://${x}`;
+      x = `http://${x}`;
     }
+    
+    try {
+      const urlObj = new URL(x as string);
+      if (urlObj.search) {
+        const searchParams = new URLSearchParams(urlObj.search.substring(1));
+        return `${urlObj.origin}${urlObj.pathname}?${searchParams.toString()}`;
+      }
+    } catch (e) {
+    }
+    
     return x;
   },
   z
@@ -49,7 +57,7 @@ export const url = z.preprocess(
         return false;
       }
     }, "Invalid URL")
-    .refine((x) => !isUrlBlocked(x as string), BLOCKLISTED_URL_MESSAGE),
+    // .refine((x) => !isUrlBlocked(x as string), BLOCKLISTED_URL_MESSAGE),
 );
 
 const strictMessage =
@@ -300,7 +308,9 @@ const baseScrapeOptions = z
     fastMode: z.boolean().default(false),
     useMock: z.string().optional(),
     blockAds: z.boolean().default(true),
-    proxy: z.enum(["basic", "stealth"]).optional(),
+    proxy: z.enum(["basic", "stealth", "auto"]).optional(),
+    __experimental_cache: z.boolean().default(false).optional(),
+    __searchPreviewToken: z.string().optional(),
   })
   .strict(strictMessage);
 
@@ -352,7 +362,7 @@ const extractTransform = (obj) => {
     obj = { ...obj, timeout: 300000 };
   }
 
-  if (obj.proxy === "stealth" && obj.timeout === 30000) {
+  if ((obj.proxy === "stealth" || obj.proxy === "auto") && obj.timeout === 30000) {
     obj = { ...obj, timeout: 120000 };
   }
 
@@ -470,6 +480,7 @@ export const extractV1Options = z
       .optional(),
     agent: agentOptionsExtract.optional(),
     __experimental_showCostTracking: z.boolean().default(false),
+    ignoreInvalidURLs: z.boolean().default(false),
   })
   .strict(strictMessage)
   .refine((obj) => obj.urls || obj.prompt, {
@@ -588,6 +599,7 @@ const crawlerOptions = z
     deduplicateSimilarURLs: z.boolean().default(true),
     ignoreQueryParameters: z.boolean().default(false),
     regexOnFullURL: z.boolean().default(false),
+    delay: z.number().positive().optional(),
   })
   .strict(strictMessage);
 
@@ -739,6 +751,9 @@ export type Document = {
     statusCode: number;
     scrapeId?: string;
     error?: string;
+    numPages?: number;
+    contentType?: string;
+    proxyUsed: "basic" | "stealth";
     // [key: string]: string | string[] | number | { smartScrape: number; other: number; total: number } | undefined;
   };
   serpResults?: {
@@ -913,10 +928,16 @@ export type AuthCreditUsageChunk = {
     scrapeAgentPreview?: number;
   };
   concurrency: number;
+  flags: TeamFlags;
 
   // appended on JS-side
   is_extract?: boolean;
 };
+
+export type TeamFlags = {
+  ignoreRobots?: boolean;
+  unblockedDomains?: string[];
+} | null;
 
 export type AuthCreditUsageChunkFromTeam = Omit<AuthCreditUsageChunk, "api_key">;
 
@@ -986,6 +1007,7 @@ export function toLegacyCrawlerOptions(x: CrawlerOptions) {
     regexOnFullURL: x.regexOnFullURL,
     maxDiscoveryDepth: x.maxDiscoveryDepth,
     currentDiscoveryDepth: 0,
+    delay: x.delay,
   };
 }
 
@@ -1008,6 +1030,7 @@ export function fromLegacyCrawlerOptions(x: any, teamId: string): {
       ignoreQueryParameters: x.ignoreQueryParameters,
       regexOnFullURL: x.regexOnFullURL,
       maxDiscoveryDepth: x.maxDiscoveryDepth,
+      delay: x.delay,
     }),
     internalOptions: {
       v0CrawlOnlyUrls: x.returnOnlyUrls,
@@ -1135,7 +1158,7 @@ export const searchRequestSchema = z
       .positive()
       .finite()
       .safe()
-      .max(50)
+      .max(100)
       .optional()
       .default(5),
     tbs: z.string().optional(),
@@ -1145,6 +1168,8 @@ export const searchRequestSchema = z
     location: z.string().optional(),
     origin: z.string().optional().default("api"),
     timeout: z.number().int().positive().finite().safe().default(60000),
+    ignoreInvalidURLs: z.boolean().optional().default(false),
+    __searchPreviewToken: z.string().optional(),
     scrapeOptions: baseScrapeOptions
       .extend({
         formats: z
@@ -1204,6 +1229,10 @@ export const generateLLMsTextRequestSchema = z.object({
     .boolean()
     .default(false)
     .describe("Whether to show the full LLMs-full.txt in the response"),
+  cache: z
+    .boolean()
+    .default(true)
+    .describe("Whether to use cached content if available"),
   __experimental_stream: z.boolean().optional(),
 });
 
